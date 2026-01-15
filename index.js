@@ -5,30 +5,59 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 
-app.get("/check", (req, res) => {
-  const domain = req.query.domain;
+const resolvers = {
+  nawala: "180.131.144.144",
+  google: "8.8.8.8",
+  cloudflare: "1.1.1.1"
+};
 
-  if (!domain) {
-    return res.json({
-      error: "parameter domain wajib"
+function digQuery(dns, domain) {
+  return new Promise((resolve) => {
+    exec(`dig @${dns} ${domain} +short +time=2`, (err, stdout, stderr) => {
+      if (err || stderr) {
+        return resolve(null);
+      }
+      const result = stdout.trim();
+      resolve(result || null);
     });
+  });
+}
+
+app.get("/check", async (req, res) => {
+  const domain = req.query.domain;
+  if (!domain) {
+    return res.json({ error: "parameter domain wajib" });
   }
 
-  const nawalaDNS = "180.131.144.144";
+  const results = {};
 
-  exec(`dig @${nawalaDNS} ${domain} +short`, (err, stdout) => {
-    const result = stdout.trim();
-    const blocked = !result;
+  for (const [name, dns] of Object.entries(resolvers)) {
+    results[name] = await digQuery(dns, domain);
+  }
 
-    res.json({
-      domain,
-      nawala: blocked,
-      resolver: nawalaDNS,
-      ip: result || null
-    });
+  // ANALISIS
+  let status = "unknown";
+
+  if (results.google && results.cloudflare && !results.nawala) {
+    status = "suspected_blocked_isp";
+  } else if (results.google && results.cloudflare && results.nawala) {
+    status = "not_blocked";
+  } else if (!results.google && !results.cloudflare) {
+    status = "domain_unreachable";
+  }
+
+  res.json({
+    domain,
+    status,
+    resolvers: {
+      nawala: results.nawala,
+      google: results.google,
+      cloudflare: results.cloudflare
+    },
+    note: "Status berdasarkan perbandingan multi DNS, bukan API resmi Nawala"
   });
 });
 
 app.listen(3000, () => {
-  console.log("Nawala ISP API running on port 3000");
+  console.log("Multi DNS Checker API running on port 3000");
 });
